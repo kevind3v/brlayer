@@ -21,4 +21,4 @@ function testDatabase(array $override = []): array
     ], $override);
 }
 
-define("DATA_LAYER_CONFIG", testDatabase());
+define("BRLAYER_CONFIG", testDatabase());

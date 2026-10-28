@@ -2,7 +2,7 @@
 
 namespace BrLayer\Tests;
 
-use BrLayer\DataLayer;
+use BrLayer\Model;
 use BrLayer\Tests\Models\StrictUser;
 use BrLayer\Tests\Models\User;
 use PDOException;
@@ -12,7 +12,7 @@ class FeaturesTest extends TestCase
 {
     public function testTransactionCommits(): void
     {
-        $id = DataLayer::transaction(function () {
+        $id = Model::transaction(function () {
             $user = new User();
             $user->first_name = "Eva";
             $user->save();
@@ -26,7 +26,7 @@ class FeaturesTest extends TestCase
     public function testTransactionRollsBackOnException(): void
     {
         try {
-            DataLayer::transaction(function () {
+            Model::transaction(function () {
                 $user = new StrictUser();
                 $user->first_name = "Eva";
                 $user->save();
@@ -45,8 +45,8 @@ class FeaturesTest extends TestCase
     public function testNestedTransactionIsCommittedByOuter(): void
     {
         try {
-            DataLayer::transaction(function () {
-                DataLayer::transaction(function () {
+            Model::transaction(function () {
+                Model::transaction(function () {
                     $user = new User();
                     $user->first_name = "Eva";
                     $user->save();

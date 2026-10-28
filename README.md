@@ -17,7 +17,7 @@ composer require brbunny/brlayer
 ## Conexão
 
 ```php
-const DATA_LAYER_CONFIG = [
+const BRLAYER_CONFIG = [
     "driver" => "mysql",
     "host" => "localhost",
     "port" => "3306",
@@ -49,13 +49,13 @@ Proteções da conexão:
 ## Model
 
 ```php
-use BrLayer\DataLayer;
+use BrLayer\Model;
 
-class User extends DataLayer
+class User extends Model
 {
     public function __construct()
     {
-        // tabela, campos obrigatórios, chave primária (padrão "id"), banco (padrão DATA_LAYER_CONFIG)
+        // tabela, campos obrigatórios, chave primária (padrão "id"), banco (padrão BRLAYER_CONFIG)
         parent::__construct("users", ["first_name", "last_name"]);
     }
 }
@@ -66,13 +66,13 @@ class User extends DataLayer
 Desligadas por padrão. Declare só as colunas que a tabela tem:
 
 ```php
-class User extends DataLayer
+class User extends Model
 {
     protected ?string $createdAt = "created_at"; // preenchida ao criar
     protected ?string $updatedAt = "updated_at"; // preenchida ao criar e ao alterar
 }
 
-class Log extends DataLayer
+class Log extends Model
 {
     protected ?string $createdAt = "log_created_at"; // tabela só com data de criação
 }
@@ -84,7 +84,7 @@ Por padrão, as falhas ficam em `fail()` e o método devolve `false`/`null`. Com
 original (com o código SQL, ex.: `23000` para duplicidade) é lançada:
 
 ```php
-class User extends DataLayer
+class User extends Model
 {
     protected bool $throwOnFail = true;
 }
@@ -181,7 +181,7 @@ Atribuições diretas continuam livres: `$user->is_admin = 1;`.
 Métodos públicos sem argumentos criados na sua model podem ser lidos como propriedade:
 
 ```php
-class User extends DataLayer
+class User extends Model
 {
     public function fullName(): string
     {
@@ -197,7 +197,7 @@ Os métodos da própria BrLayer (`save`, `destroy`, `find`...) nunca são chamad
 ## Transação
 
 ```php
-DataLayer::transaction(function () {
+Model::transaction(function () {
     $user->save();
     $address->save();
 });
@@ -205,14 +205,14 @@ DataLayer::transaction(function () {
 
 Confirma no fim, ou desfaz tudo se qualquer exceção for lançada (e repassa a exceção). Dentro de outra
 transação, só roda dentro dela. Para que uma falha de `save()` desfaça a transação, use `$throwOnFail = true`.
-Para outro banco: `DataLayer::transaction($action, OUTRO_BANCO)`.
+Para outro banco: `Model::transaction($action, OUTRO_BANCO)`.
 
 ## SQL próprio
 
 Para agregações, JOIN, UNION e comandos em lote, a model tem métodos protegidos:
 
 ```php
-class User extends DataLayer
+class User extends Model
 {
     public function totalsByGenre(array $ids): array
     {
@@ -245,7 +245,9 @@ $model->getParams();    // ["id" => 1]
 
 ## Migrando da CoffeeCode DataLayer
 
-1. Troque `CoffeeCode\DataLayer\` por `BrLayer\` nos `use`.
+1. A classe base agora é `BrLayer\Model`: troque `use CoffeeCode\DataLayer\DataLayer;` por
+   `use BrLayer\Model;` e `extends DataLayer` por `extends Model`. O `Connect` virou `BrLayer\Connect`.
+   A constante `DATA_LAYER_CONFIG` continua funcionando; o nome novo é `BRLAYER_CONFIG`.
 2. **Timestamps agora são desligados por padrão.** Nas models que usam `created_at`/`updated_at`, declare
    `$createdAt` e `$updatedAt`. O 4º parâmetro do construtor (`bool $timestamps`) saiu: o banco
    passou a ser o 4º.

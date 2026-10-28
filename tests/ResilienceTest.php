@@ -3,7 +3,7 @@
 namespace BrLayer\Tests;
 
 use BrLayer\Connect;
-use BrLayer\DataLayer;
+use BrLayer\Model;
 use BrLayer\Tests\Models\StrictUser;
 use BrLayer\Tests\Models\User;
 use PDO;
@@ -14,18 +14,18 @@ use PDOException;
  */
 class ResilienceTest extends TestCase
 {
-    private function model(array $override, bool $strict = false): DataLayer
+    private function model(array $override, bool $strict = false): Model
     {
         $database = testDatabase($override);
         return $strict
-            ? new class ($database) extends DataLayer {
+            ? new class ($database) extends Model {
                 protected bool $throwOnFail = true;
                 public function __construct(array $database = [])
                 {
                     parent::__construct("users", ["first_name"], "id", $database ?: testDatabase(["port" => "1"]));
                 }
             }
-            : new class ($database) extends DataLayer {
+            : new class ($database) extends Model {
                 public function __construct(array $database = [])
                 {
                     parent::__construct("users", ["first_name"], "id", $database ?: testDatabase(["port" => "1"]));
@@ -105,7 +105,7 @@ class ResilienceTest extends TestCase
         $this->assertStringContainsString("1205", $user->fail()->getMessage());
 
         try {
-            DataLayer::transaction(function () {
+            Model::transaction(function () {
                 $other = (new StrictUser())->findById(2);
                 $other->first_name = "Mudou";
                 $other->save();

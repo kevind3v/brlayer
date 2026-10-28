@@ -21,7 +21,7 @@ class Connect
     private static ?PDOException $error = null;
 
     /**
-     * Devolve a conexão do banco informado (ou da constante DATA_LAYER_CONFIG), abrindo na primeira vez.
+     * Devolve a conexão do banco informado (ou da constante BRLAYER_CONFIG), abrindo na primeira vez.
      *
      * Chaves aceitas: driver, host, port, dbname, username, passwd, options e, opcionais,
      * charset (só mysql) e dsn (substitui o DSN montado, ex.: "sqlite::memory:").
@@ -140,11 +140,14 @@ class Connect
      */
     private static function defaultConfig(): array
     {
-        if (!defined("DATA_LAYER_CONFIG")) {
-            throw new LogicException("Defina a constante DATA_LAYER_CONFIG ou informe a configuração do banco");
+        //DATA_LAYER_CONFIG: nome da CoffeeCode DataLayer, aceito para facilitar a migração
+        foreach (["BRLAYER_CONFIG", "DATA_LAYER_CONFIG"] as $constant) {
+            if (defined($constant)) {
+                return constant($constant);
+            }
         }
 
-        return constant("DATA_LAYER_CONFIG");
+        throw new LogicException("Defina a constante BRLAYER_CONFIG ou informe a configuração do banco");
     }
 
     /**

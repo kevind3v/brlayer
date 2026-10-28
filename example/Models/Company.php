@@ -2,9 +2,9 @@
 
 namespace Example\Models;
 
-use BrLayer\DataLayer;
+use BrLayer\Model;
 
-class Company extends DataLayer
+class Company extends Model
 {
     protected ?string $createdAt = "created_at";
     protected ?string $updatedAt = "updated_at";

@@ -86,7 +86,7 @@ class SecurityTest extends TestCase
         $this->assertNull($user);
     }
 
-    public function testGetDoesNotCallDataLayerMethods(): void
+    public function testGetDoesNotCallLibMethods(): void
     {
         $user = (new User())->findById(1);
 

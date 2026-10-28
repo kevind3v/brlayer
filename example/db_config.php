@@ -1,7 +1,7 @@
 <?php
 
 // Valores vindos do ambiente (ex.: DB_PASS=senha php -S ...), com padrão para uso local
-define("DATA_LAYER_CONFIG", [
+define("BRLAYER_CONFIG", [
     "driver" => "mysql",
     "host" => getenv("DB_HOST") ?: "127.0.0.1",
     "port" => getenv("DB_PORT") ?: "3306",
@@ -16,7 +16,7 @@ define("DATA_LAYER_CONFIG", [
     ]
 ]);
 
-//const DATA_LAYER_CONFIG = [
+//const BRLAYER_CONFIG = [
 //    "driver" => "pgsql",
 //    "host" => "localhost",
 //    "port" => "5432",

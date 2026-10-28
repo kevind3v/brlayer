@@ -4,6 +4,7 @@
   "keywords": [
     "BrLayer",
     "DataLayer",
+    "Model",
     "Database",
     "PDO",
     "Active Record",

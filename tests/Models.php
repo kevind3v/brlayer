@@ -2,9 +2,9 @@
 
 namespace BrLayer\Tests\Models;
 
-use BrLayer\DataLayer;
+use BrLayer\Model;
 
-class User extends DataLayer
+class User extends Model
 {
     protected ?string $createdAt = "created_at";
     protected ?string $updatedAt = "updated_at";
@@ -61,7 +61,7 @@ class StrictUser extends User
     protected bool $throwOnFail = true;
 }
 
-class Log extends DataLayer
+class Log extends Model
 {
     protected ?string $createdAt = "created_at";
 
@@ -71,7 +71,7 @@ class Log extends DataLayer
     }
 }
 
-class Menu extends DataLayer
+class Menu extends Model
 {
     public function __construct()
     {
@@ -79,7 +79,7 @@ class Menu extends DataLayer
     }
 }
 
-class Token extends DataLayer
+class Token extends Model
 {
     public function __construct()
     {
@@ -87,7 +87,7 @@ class Token extends DataLayer
     }
 }
 
-class Product extends DataLayer
+class Product extends Model
 {
     public function __construct()
     {
@@ -95,7 +95,7 @@ class Product extends DataLayer
     }
 }
 
-class BrokenUser extends DataLayer
+class BrokenUser extends Model
 {
     public function __construct()
     {

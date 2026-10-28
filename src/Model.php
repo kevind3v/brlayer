@@ -15,10 +15,10 @@ use stdClass;
 use Throwable;
 
 /**
- * Class DataLayer
+ * Class Model
  * @package BrLayer
  */
-abstract class DataLayer
+abstract class Model
 {
     use CrudTrait;
 
@@ -82,7 +82,7 @@ abstract class DataLayer
     private ?object $data = null;
 
     /**
-     * DataLayer constructor.
+     * Model constructor.
      * @param string $entity
      * @param array $required
      * @param string $primary
@@ -603,7 +603,7 @@ abstract class DataLayer
     }
 
     /**
-     * Só métodos públicos criados na model (não os da DataLayer, como save e destroy) e sem argumentos.
+     * Só métodos públicos criados na model (não os da Model, como save e destroy) e sem argumentos.
      *
      * @param string $method
      * @return bool

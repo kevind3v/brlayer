@@ -2,13 +2,13 @@
 
 namespace Example\Models;
 
-use BrLayer\DataLayer;
+use BrLayer\Model;
 
 /**
  * Class User
  * @package Example\Models
  */
-class UserDatabase extends DataLayer
+class UserDatabase extends Model
 {
     /**
      * User constructor.
