@@ -1,5 +1,5 @@
 {
-  "name": "kevind3v/brlayer",
+  "name": "brbunny/brlayer",
   "description": "Camada de persistência com PDO e prepared statements: model Active Record com CRUD, consultas encadeadas e SQL próprio seguro.",
   "keywords": [
     "BrLayer",

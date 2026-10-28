@@ -11,7 +11,7 @@ Camada de persistência para PHP 8.2+ com PDO e prepared statements. Você cria 
 ## Instalação
 
 ```bash
-composer require kevind3v/brlayer
+composer require brbunny/brlayer
 ```
 
 ## Conexão
