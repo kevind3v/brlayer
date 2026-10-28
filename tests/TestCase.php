@@ -14,7 +14,7 @@ abstract class TestCase extends \PHPUnit\Framework\TestCase
     protected function setUp(): void
     {
         $this->pdo = Connect::getInstance();
-        $this->pdo->exec("DROP TABLE IF EXISTS users, logs, menus, tokens, products");
+        $this->pdo->exec("DROP TABLE IF EXISTS users, logs, menus, tokens, products, roles");
         $this->pdo->exec("CREATE TABLE users (
             id INT AUTO_INCREMENT PRIMARY KEY,
             first_name VARCHAR(100) NOT NULL,
@@ -45,6 +45,13 @@ abstract class TestCase extends \PHPUnit\Framework\TestCase
             stock INT NOT NULL,
             active TINYINT(1) NOT NULL DEFAULT 1
         )");
+        $this->pdo->exec("CREATE TABLE roles (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            user_id INT NOT NULL,
+            name VARCHAR(50) NOT NULL
+        )");
+        $this->pdo->exec("INSERT INTO roles (user_id, name) VALUES
+            (1, 'admin'), (1, 'editor'), (2, 'editor'), (3, 'viewer')");
         $this->pdo->exec("INSERT INTO users (first_name, last_name, email) VALUES
             ('Ana', 'Silva', 'ana@x.com'),
             ('Bruno', 'Souza', 'bruno@x.com'),

@@ -238,6 +238,58 @@ class User extends Model
 | `static::inList($values, $name)` | placeholders e valores de um `IN`. Lista vazia vira `NULL` (não encontra nada) |
 | `static::now($modify)` | data e hora no fuso do PHP, ex.: `now("-30 days")` |
 
+## Consultas com JOIN: `Query`
+
+Para relatórios e consultas com mais de uma tabela, monte a consulta por partes. O resultado vem em
+arrays associativos:
+
+```php
+use BrLayer\Query;
+
+$query = Query::create()
+    ->select("u.id, u.first_name, c.name AS company")
+    ->from("users u")
+    ->leftJoin("companies c", "c.id", "u.company_id")
+    ->where("u.status = ?", "ativo")
+    ->andWhere("u.first_name LIKE ? OR u.email LIKE ?", "%{$busca}%")
+    ->andWhereIn("u.company_id", $empresas)
+    ->order("u.first_name")
+    ->limit(20)
+    ->offset(40);
+
+$total = $query->count();        // ignora order, limit e offset (para paginação)
+$users = $query->fetchArray();   // todas as linhas, ou null
+$user = $query->fetchArray(false); // só a primeira
+```
+
+**Valores** vão sempre por placeholder, em `where()`, `andWhere()` e `orWhere()`:
+
+| Chamada | Valores |
+|---|---|
+| `where("id > ? AND id < ?", [1, 9])` | um por `?`, na ordem |
+| `where("name LIKE ? OR email LIKE ?", "%ana%")` | um valor só, usado em todos os `?` |
+| `where("email = :email", ["email" => $email])` | por nome |
+
+A quantidade de valores precisa bater com a de `?`; senão a `Query` lança `InvalidArgumentException`.
+Um `?` dentro de um texto (`'Quem?'`) não conta.
+
+Detalhes:
+
+- Cada condição entra entre parênteses: `where("a OR b")->andWhere("c")` vira `(a OR b) AND (c)`.
+- `andWhereIn()` com lista vazia não encontra nada. Com `true` no terceiro parâmetro (`NOT IN`), lista
+  vazia não exclui nada. Nulos e repetidos saem; `0` fica.
+- `join("LEFT JOIN roles r ON r.user_id = u.id AND r.name = :role")` para ON com mais de uma condição,
+  com os valores em `params(["role" => "admin"])`.
+- `query("SELECT ...", "id > :id", ["id" => 2])` usa um SQL inteiro escrito por você. `where()`,
+  `order()`, `limit()` e `count()` continuam funcionando.
+- `group()` e `order()` são validados como na model. Para funções, use `groupRaw()` e `orderRaw()`.
+- `limit(null)` e `offset(null)` removem o limite.
+- Falhas ficam em `fail()`. Para lançar a exceção: `Query::create()->throwOnFail()`.
+- Outro banco: `Query::create(OUTRO_BANCO)`.
+
+> `select()`, `from()`, os joins e o texto do `where()` vão para o SQL como foram escritos. Nunca coloque
+> dados do usuário neles: valores vão pelos placeholders.
+
 ## Depuração
 
 ```php
