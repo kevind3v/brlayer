@@ -1,18 +1,38 @@
 <?php
 
-namespace CoffeeCode\DataLayer;
+declare(strict_types=1);
 
+namespace BrLayer;
+
+use DateTime;
+use DomainException;
+use Exception;
+use InvalidArgumentException;
 use PDO;
 use PDOException;
+use ReflectionMethod;
 use stdClass;
+use Throwable;
 
 /**
  * Class DataLayer
- * @package CoffeeCode\DataLayer
+ * @package BrLayer
  */
 abstract class DataLayer
 {
     use CrudTrait;
+
+    /** @var string|null coluna preenchida na criação (null = a tabela não tem) */
+    protected ?string $createdAt = null;
+
+    /** @var string|null coluna preenchida na criação e na alteração (null = a tabela não tem) */
+    protected ?string $updatedAt = null;
+
+    /** @var array colunas aceitas pelo fill() quando ele não recebe a lista */
+    protected array $fillable = [];
+
+    /** @var bool lança a exceção da falha em vez de só guardar em fail() */
+    protected bool $throwOnFail = false;
 
     /** @var string $entity database table */
     private string $entity;
@@ -23,62 +43,68 @@ abstract class DataLayer
     /** @var array $required table required fields */
     private array $required;
 
-    /** @var bool $timestamps control created and updated at */
-    private bool $timestamps;
-
     /** @var array|null */
     private ?array $database;
 
+    /*
+     * Estado da consulta e dados: privados para que colunas com o mesmo nome
+     * (ex.: "data", "order") passem pelo __get/__set e nunca colidam com eles.
+     */
+
     /** @var string|null */
-    protected ?string $statement = null;
+    private ?string $columns = null;
+
+    /** @var string[] */
+    private array $where = [];
 
     /** @var array|null */
-    protected ?array $params = null;
+    private ?array $params = null;
 
     /** @var string|null */
-    protected ?string $group = null;
+    private ?string $group = null;
 
     /** @var string|null */
-    protected ?string $order = null;
+    private ?string $order = null;
 
     /** @var string|null */
-    protected ?string $limit = null;
+    private ?string $limit = null;
 
     /** @var string|null */
-    protected ?string $offset = null;
+    private ?string $offset = null;
 
-    /** @var PDOException|null */
-    protected ?PDOException $fail = null;
+    /** @var int */
+    private int $inIndex = 0;
+
+    /** @var Exception|null */
+    private ?Exception $fail = null;
 
     /** @var object|null */
-    protected ?object $data = null;
+    private ?object $data = null;
 
     /**
      * DataLayer constructor.
      * @param string $entity
      * @param array $required
      * @param string $primary
-     * @param bool $timestamps
+     * @param array|null $database
      */
     public function __construct(
         string $entity,
         array $required,
         string $primary = 'id',
-        bool $timestamps = true,
-        array $database = null
+        ?array $database = null
     ) {
-        $this->entity = $entity;
-        $this->primary = $primary;
+        $this->entity = Identifier::column($entity);
+        $this->primary = Identifier::name($primary);
         $this->required = $required;
-        $this->timestamps = $timestamps;
         $this->database = $database;
     }
 
     /**
-     * @param $name
-     * @param $value
+     * @param string $name
+     * @param mixed $value
      */
-    public function __set($name, $value)
+    public function __set(string $name, mixed $value): void
     {
         if (empty($this->data)) {
             $this->data = new stdClass();
@@ -88,30 +114,77 @@ abstract class DataLayer
     }
 
     /**
-     * @param $name
+     * @param string $name
      * @return bool
      */
-    public function __isset($name)
+    public function __isset(string $name): bool
     {
         return isset($this->data->$name);
     }
 
     /**
-     * @param $name
-     * @return string|null
+     * Devolve o valor da coluna ou o resultado de um método da model (ex.: full_name => fullName()).
+     *
+     * @param string $name
+     * @return mixed
      */
-    public function __get($name)
+    public function __get(string $name): mixed
     {
-        $method = $this->toCamelCase($name);
-        if (method_exists($this, $method)) {
-            return $this->$method();
-        }
-
-        if (method_exists($this, $name)) {
-            return $this->$name();
+        foreach ([$this->toCamelCase($name), $name] as $method) {
+            if ($this->isAccessor($method)) {
+                return $this->$method();
+            }
         }
 
         return ($this->data->$name ?? null);
+    }
+
+    /**
+     * var_dump/print_r sem a senha do banco.
+     *
+     * @return array
+     */
+    public function __debugInfo(): array
+    {
+        $info = get_object_vars($this);
+        if (isset($info["database"]["passwd"])) {
+            $info["database"]["passwd"] = "********";
+        }
+        return $info;
+    }
+
+    /**
+     * Roda tudo numa transação: confirma no fim ou desfaz tudo se der qualquer erro (e repassa o erro).
+     * Se já houver uma transação aberta, só roda dentro dela (quem abriu é quem confirma).
+     *
+     * Falhas só desfazem a transação se lançarem exceção: use $throwOnFail = true nas models.
+     *
+     * @param callable $action o retorno dela é devolvido
+     * @param array|null $database
+     * @return mixed
+     */
+    public static function transaction(callable $action, ?array $database = null): mixed
+    {
+        $pdo = Connect::getInstance($database);
+        if ($pdo->inTransaction()) {
+            return $action();
+        }
+
+        $pdo->beginTransaction();
+        try {
+            $result = $action();
+            $pdo->commit();
+            return $result;
+        } catch (Throwable $exception) {
+            try {
+                if ($pdo->inTransaction()) {
+                    $pdo->rollBack();
+                }
+            } catch (PDOException) {
+                //conexão caiu: o banco já desfez a transação; repassa o erro original
+            }
+            throw $exception;
+        }
     }
 
     /**
@@ -120,11 +193,14 @@ abstract class DataLayer
      */
     public function columns(int $mode = PDO::FETCH_OBJ): ?array
     {
-        $stmt = Connect::getInstance($this->database)->prepare("DESCRIBE {$this->entity}");
-        $stmt->execute($this->params);
-        return $stmt->fetchAll($mode);
-    }
+        $this->fail = null;
 
+        try {
+            return $this->run("DESCRIBE {$this->entity}")->fetchAll($mode);
+        } catch (DomainException | PDOException $exception) {
+            return $this->failed($exception);
+        }
+    }
 
     /**
      * @return object|null
@@ -135,66 +211,107 @@ abstract class DataLayer
     }
 
     /**
-     * @return PDOException|null
+     * @return Exception|null
      */
-    public function fail(): ?PDOException
+    public function fail(): ?Exception
     {
         return $this->fail;
     }
 
     /**
-     * @param string|null $terms
-     * @param string|null $params
-     * @param string $columns
-     * @return DataLayer
+     * Preenche a model só com os campos permitidos (ex.: dados de formulário).
+     *
+     * Sem a lista, usa $fillable, mas nunca a chave primária. Para aceitar a chave primária,
+     * informe-a na lista.
+     *
+     * @param array $data
+     * @param array|null $allowed
+     * @return static
      */
-    public function find(?string $terms = null, ?string $params = null, string $columns = "*"): DataLayer
+    public function fill(array $data, ?array $allowed = null): static
     {
-        if ($terms) {
-            $this->statement = "SELECT {$columns} FROM {$this->entity} WHERE {$terms}";
-            parse_str($params ?? "", $this->params);
-            return $this;
+        $allowed = $allowed ?? array_diff($this->fillable, [$this->primary]);
+        if (empty($allowed)) {
+            throw new InvalidArgumentException("Informe os campos permitidos para o fill() ou defina \$fillable");
         }
 
-        $this->statement = "SELECT {$columns} FROM {$this->entity}";
+        foreach ($allowed as $field) {
+            if (array_key_exists($field, $data)) {
+                $this->__set($field, $data[$field]);
+            }
+        }
+
         return $this;
     }
 
     /**
-     * @param int $id
+     * Começa uma nova consulta (descarta filtros, ordem e limites da anterior).
+     *
+     * @param string|null $terms condição do WHERE, sempre com placeholders
+     * @param array|string|null $params valores: array (recomendado) ou query string
      * @param string $columns
-     * @return DataLayer|null
+     * @return static
      */
-    public function findById(int $id, string $columns = "*"): ?DataLayer
+    public function find(?string $terms = null, array|string|null $params = null, string $columns = "*"): static
     {
-        return $this->find("{$this->primary} = :id", "id={$id}", $columns)->fetch();
+        $this->columns = Identifier::columns($columns);
+        $this->where = $terms ? [$terms] : [];
+        $this->params = $terms ? $this->normalizeParams($params) : null;
+        $this->group = null;
+        $this->order = null;
+        $this->limit = null;
+        $this->offset = null;
+        $this->inIndex = 0;
+        return $this;
+    }
+
+    /**
+     * @param int|string $id
+     * @param string $columns
+     * @return static|null
+     */
+    public function findById(int|string $id, string $columns = "*"): ?static
+    {
+        return $this->find("{$this->primary} = :brlayer_pk", ["brlayer_pk" => $id], $columns)->fetch();
     }
 
     /**
      * @param string $column
-     * @return DataLayer|null
+     * @return static
      */
-    public function group(string $column): ?DataLayer
+    public function group(string $column): static
     {
-        $this->group = " GROUP BY {$column}";
+        $this->group = " GROUP BY " . Identifier::list($column);
         return $this;
     }
 
     /**
-     * @param string $columnOrder
-     * @return DataLayer|null
+     * @param string $columnOrder ex.: "us.first_name DESC, id"
+     * @return static
      */
-    public function order(string $columnOrder): ?DataLayer
+    public function order(string $columnOrder): static
     {
-        $this->order = " ORDER BY {$columnOrder}";
+        $this->order = " ORDER BY " . Identifier::order($columnOrder);
+        return $this;
+    }
+
+    /**
+     * ORDER BY sem validação (ex.: "RAND()"). Nunca passe dados do usuário aqui.
+     *
+     * @param string $order
+     * @return static
+     */
+    public function orderRaw(string $order): static
+    {
+        $this->order = " ORDER BY {$order}";
         return $this;
     }
 
     /**
      * @param int $limit
-     * @return DataLayer|null
+     * @return static
      */
-    public function limit(int $limit): ?DataLayer
+    public function limit(int $limit): static
     {
         $this->limit = " LIMIT {$limit}";
         return $this;
@@ -203,41 +320,28 @@ abstract class DataLayer
     /**
      * @param string $column
      * @param array $values
-     * @return DataLayer
+     * @return static
      */
-    public function in(string $column, array $values): DataLayer
+    public function in(string $column, array $values): static
     {
-        $index = 0;
-        $params = array();
-        $statement = "{$column} IN (";
-
-        foreach ($values as $value) {
-            $index++;
-            if ($value == end($values)) {
-                $statement .= ":in_{$index}";
-            } else {
-                $statement .= ":in_{$index},";
-            }
-
-            $params["in_{$index}"] = $value;
+        Identifier::column($column);
+        if ($this->columns === null) {
+            $this->find();
         }
 
-        $statement .= ")";
-        if (!str_contains($this->statement, "WHERE")) {
-            $this->statement .= " WHERE " . $statement;
-        } else {
-            $this->statement .= " AND " . $statement;
-        }
+        [$placeholders, $params] = static::inList($values, "in{$this->inIndex}_");
+        $this->inIndex++;
 
-        $this->params = $this->params ? $this->params += $params : $params;
+        $this->where[] = "{$column} IN ({$placeholders})";
+        $this->params = array_merge($this->params ?? [], $this->normalizeParams($params));
         return $this;
     }
 
     /**
      * @param int $offset
-     * @return DataLayer|null
+     * @return static
      */
-    public function offset(int $offset): ?DataLayer
+    public function offset(int $offset): static
     {
         $this->offset = " OFFSET {$offset}";
         return $this;
@@ -245,39 +349,42 @@ abstract class DataLayer
 
     /**
      * @param bool $all
-     * @return static|array|null
+     * @return static|static[]|null
      */
     public function fetch(bool $all = false): array|static|null
     {
-        try {
-            $stmt = Connect::getInstance($this->database)->prepare(
-                $this->statement . $this->group . $this->order . $this->limit . $this->offset
-            );
-            $stmt->execute($this->params);
+        $this->fail = null;
 
-            if (!$stmt->rowCount()) {
-                return null;
-            }
+        try {
+            $stmt = $this->run($this->selectSql(), $this->params ?? []);
 
             if ($all) {
-                return $stmt->fetchAll(PDO::FETCH_CLASS, static::class);
+                $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+                return $rows ? array_map(fn($row) => $this->hydrate($row), $rows) : null;
             }
 
-            return $stmt->fetchObject(static::class);
-        } catch (PDOException $exception) {
-            $this->fail = $exception;
-            return null;
+            $row = $stmt->fetch(PDO::FETCH_ASSOC);
+            return $row ? $this->hydrate($row) : null;
+        } catch (DomainException | PDOException $exception) {
+            return $this->failed($exception);
         }
     }
 
     /**
+     * Total de registros da consulta (considera o WHERE e o in(); ignora group, order, limit e offset).
+     *
      * @return int
      */
     public function count(): int
     {
-        $stmt = Connect::getInstance($this->database)->prepare($this->statement);
-        $stmt->execute($this->params);
-        return $stmt->rowCount();
+        $this->fail = null;
+
+        try {
+            $stmt = $this->run("SELECT COUNT(*) FROM {$this->entity}{$this->whereSql()}", $this->params ?? []);
+            return (int)$stmt->fetchColumn();
+        } catch (DomainException | PDOException $exception) {
+            return $this->failed($exception) ?? 0;
+        }
     }
 
     /**
@@ -285,36 +392,41 @@ abstract class DataLayer
      */
     public function save(): bool
     {
+        $this->fail = null;
         $primary = $this->primary;
-        $id = null;
-        $save = null;
+        $data = (array)$this->data;
+        $id = $data[$primary] ?? null;
+        unset($data[$primary]);
 
         try {
-            if (!$this->required()) {
-                throw new PDOException("Preencha os campos necessários");
+            $missing = $this->missing();
+            if ($missing) {
+                throw new DomainException("Preencha os campos necessários: " . implode(", ", $missing));
             }
 
-            /** Update */
-            if (!empty($this->data->$primary)) {
-                $id = $this->data->$primary;
-                $save = $this->update($this->safe(), "{$this->primary} = :id", "id={$id}");
-            }
-
-            /** Create */
-            if (empty($this->data->$primary)) {
-                $id = $this->create($this->safe());
-                $save = $id;
-            }
-
-            if ($save === false) {
+            if (empty($id)) {
+                /** Create */
+                $id = $this->create($data);
+                if ($id === false) {
+                    return false;
+                }
+            } elseif ($this->exists($id)) {
+                /** Update */
+                if ($this->update($data, "{$primary} = :brlayer_pk", ["brlayer_pk" => $id]) === null) {
+                    return false;
+                }
+            } elseif ($this->create([$primary => $id] + $data) === false) {
+                /** Create com a chave definida pelo sistema (ex.: UUID) */
                 return false;
             }
 
-            $this->data = $this->findById($id)->data();
+            $saved = $this->findById($id);
+            if ($saved) {
+                $this->data = $saved->data();
+            }
             return true;
-        } catch (PDOException $exception) {
-            $this->fail = $exception;
-            return false;
+        } catch (DomainException | PDOException $exception) {
+            return $this->failed($exception) ?? false;
         }
     }
 
@@ -323,42 +435,148 @@ abstract class DataLayer
      */
     public function destroy(): bool
     {
-        $primary = $this->primary;
-        $id = $this->data->$primary;
+        $id = $this->data->{$this->primary} ?? null;
 
         if (empty($id)) {
             return false;
         }
 
-        return $this->delete("{$this->primary} = :id", "id={$id}");
+        return $this->delete("{$this->primary} = :brlayer_pk", ["brlayer_pk" => $id]);
     }
 
     /**
-     * @return bool
-     */
-    protected function required(): bool
-    {
-        $data = (array)$this->data();
-        foreach ($this->required as $field) {
-            if (empty($data[$field])) {
-                if (!is_int($data[$field])) {
-                    return false;
-                }
-            }
-        }
-        return true;
-    }
-
-    /**
+     * Parâmetros da consulta montada (para depuração).
+     *
      * @return array|null
      */
-    protected function safe(): ?array
+    public function getParams(): ?array
     {
-        $safe = (array)$this->data;
-        unset($safe[$this->primary]);
-        return $safe;
+        return $this->params;
     }
 
+    /**
+     * SQL da consulta montada (para depuração).
+     *
+     * @return string|null
+     */
+    public function getStatement(): ?string
+    {
+        return $this->columns === null ? null : $this->selectSql();
+    }
+
+    /**
+     * Monta os placeholders de um "IN (...)", para nunca colocar os valores direto no SQL.
+     *
+     * Ex.: inList([3, 7], "acc") => [":acc0, :acc1", [":acc0" => 3, ":acc1" => 7]].
+     * Nulos e repetidos saem. Lista vazia vira "NULL" (não encontra nada).
+     * Use um nome diferente para cada IN do mesmo SQL.
+     *
+     * @param array $values
+     * @param string $name prefixo dos placeholders
+     * @return array [string $placeholders, array $params]
+     */
+    protected static function inList(array $values, string $name = "id"): array
+    {
+        if (!preg_match('/^[A-Za-z0-9_]+$/', $name)) {
+            throw new InvalidArgumentException("Nome de placeholder inválido: {$name}");
+        }
+
+        $values = array_values(array_unique(
+            array_filter($values, fn($value) => $value !== null),
+            SORT_REGULAR
+        ));
+        if (!$values) {
+            return ["NULL", []];
+        }
+
+        $params = [];
+        foreach ($values as $i => $value) {
+            $params[":{$name}{$i}"] = $value;
+        }
+        return [implode(", ", array_keys($params)), $params];
+    }
+
+    /**
+     * Executa uma consulta com SQL próprio (agregações, JOIN, UNION) e devolve as linhas.
+     *
+     * @param string $sql SQL com placeholders
+     * @param array|string|null $params
+     * @return array linhas como arrays associativos
+     */
+    protected function rows(string $sql, array|string|null $params = []): array
+    {
+        $this->fail = null;
+
+        try {
+            return $this->run($sql, $this->normalizeParams($params))->fetchAll(PDO::FETCH_ASSOC);
+        } catch (DomainException | PDOException $exception) {
+            return $this->failed($exception) ?? [];
+        }
+    }
+
+    /**
+     * Executa uma consulta com SQL próprio e devolve a primeira linha.
+     *
+     * @param string $sql
+     * @param array|string|null $params
+     * @return array|null
+     */
+    protected function row(string $sql, array|string|null $params = []): ?array
+    {
+        $this->fail = null;
+
+        try {
+            $row = $this->run($sql, $this->normalizeParams($params))->fetch(PDO::FETCH_ASSOC);
+            return $row ?: null;
+        } catch (DomainException | PDOException $exception) {
+            return $this->failed($exception);
+        }
+    }
+
+    /**
+     * Executa um comando com SQL próprio (ex.: UPDATE em lote).
+     *
+     * @param string $sql
+     * @param array|string|null $params
+     * @return int linhas alteradas
+     */
+    protected function execute(string $sql, array|string|null $params = []): int
+    {
+        $this->fail = null;
+
+        try {
+            return $this->run($sql, $this->normalizeParams($params))->rowCount();
+        } catch (DomainException | PDOException $exception) {
+            return $this->failed($exception) ?? 0;
+        }
+    }
+
+    /**
+     * Data e hora agora no fuso do PHP (o banco pode estar em outro fuso).
+     *
+     * @param string|null $modify ajuste relativo (ex.: "+30 minutes")
+     * @return string Y-m-d H:i:s
+     */
+    protected static function now(?string $modify = null): string
+    {
+        $date = new DateTime("now");
+        if ($modify) {
+            $date->modify($modify);
+        }
+        return $date->format("Y-m-d H:i:s");
+    }
+
+    /**
+     * @return string[] campos obrigatórios não preenchidos
+     */
+    protected function missing(): array
+    {
+        $data = (array)$this->data;
+        return array_values(array_filter(
+            $this->required,
+            fn($field) => !isset($data[$field]) || $data[$field] === ""
+        ));
+    }
 
     /**
      * @param string $string
@@ -366,8 +584,86 @@ abstract class DataLayer
      */
     protected function toCamelCase(string $string): string
     {
-        $camelCase = str_replace(' ', '', ucwords(str_replace('_', ' ', $string)));
-        $camelCase[0] = strtolower($camelCase[0]);
-        return $camelCase;
+        return lcfirst(str_replace(' ', '', ucwords(str_replace('_', ' ', $string))));
+    }
+
+    /**
+     * Guarda a falha e, com $throwOnFail, lança a exceção.
+     *
+     * @param Exception $exception
+     * @return null
+     */
+    private function failed(Exception $exception): null
+    {
+        $this->fail = $exception;
+        if ($this->throwOnFail) {
+            throw $exception;
+        }
+        return null;
+    }
+
+    /**
+     * Só métodos públicos criados na model (não os da DataLayer, como save e destroy) e sem argumentos.
+     *
+     * @param string $method
+     * @return bool
+     */
+    private function isAccessor(string $method): bool
+    {
+        if ($method === "" || !method_exists($this, $method) || method_exists(self::class, $method)) {
+            return false;
+        }
+
+        $reflection = new ReflectionMethod($this, $method);
+        return $reflection->isPublic()
+            && !$reflection->isStatic()
+            && $reflection->getNumberOfRequiredParameters() === 0;
+    }
+
+    /**
+     * @param int|string $id
+     * @return bool
+     */
+    private function exists(int|string $id): bool
+    {
+        return $this->run(
+            "SELECT 1 FROM {$this->entity} WHERE {$this->primary} = :brlayer_pk",
+            ["brlayer_pk" => $id]
+        )->fetchColumn() !== false;
+    }
+
+    /**
+     * @param array $row
+     * @return static
+     */
+    private function hydrate(array $row): static
+    {
+        $model = new static();
+        $model->data = (object)$row;
+        return $model;
+    }
+
+    /**
+     * @return string
+     */
+    private function selectSql(): string
+    {
+        $columns = $this->columns ?? "*";
+        return "SELECT {$columns} FROM {$this->entity}{$this->whereSql()}"
+            . $this->group . $this->order . $this->limit . $this->offset;
+    }
+
+    /**
+     * @return string
+     */
+    private function whereSql(): string
+    {
+        if (!$this->where) {
+            return "";
+        }
+        if (count($this->where) === 1) {
+            return " WHERE {$this->where[0]}";
+        }
+        return " WHERE (" . implode(") AND (", $this->where) . ")";
     }
 }

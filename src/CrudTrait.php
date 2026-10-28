@@ -1,108 +1,181 @@
 <?php
 
-namespace CoffeeCode\DataLayer;
+declare(strict_types=1);
 
-use DateTime;
+namespace BrLayer;
+
+use BackedEnum;
+use DateTimeInterface;
+use DomainException;
+use PDO;
 use PDOException;
+use PDOStatement;
+use Stringable;
 
 /**
  * Trait CrudTrait
- * @package CoffeeCode\DataLayer
+ * @package BrLayer
  */
 trait CrudTrait
 {
     /**
      * @param array $data
-     * @return int|null
-     * @throws PDOException
+     * @return string|false id do registro criado
      */
-    protected function create(array $data): string|bool
+    protected function create(array $data): string|false
     {
-        if ($this->timestamps) {
-            $data["created_at"] = (new DateTime("now"))->format("Y-m-d H:i:s");
+        if ($this->createdAt) {
+            $data[$this->createdAt] = static::now();
+        }
+        if ($this->updatedAt) {
+            $data[$this->updatedAt] = static::now();
         }
 
         try {
-            $columns = implode(", ", array_keys($data));
+            $pdo = Connect::getInstance($this->database);
+            $columns = implode(", ", array_map(fn($column) => $this->quote($pdo, $column), array_keys($data)));
             $values = ":" . implode(", :", array_keys($data));
 
-            $stmt = Connect::getInstance($this->database);
-            $prepare = $stmt->prepare("INSERT INTO {$this->entity} ({$columns}) VALUES ({$values})");
-            $prepare->execute($this->filter($data));
-
-            return $stmt->lastInsertId();
-        } catch (PDOException $exception) {
-            $this->fail = $exception;
-            return false;
+            $this->run("INSERT INTO {$this->entity} ({$columns}) VALUES ({$values})", $data);
+            return $pdo->lastInsertId();
+        } catch (DomainException | PDOException $exception) {
+            return $this->failed($exception) ?? false;
         }
     }
 
     /**
      * @param array $data
      * @param string $terms
-     * @param string $params
-     * @return int|null
-     * @throws PDOException
+     * @param array|string|null $params
+     * @return int|null linhas alteradas
      */
-    protected function update(array $data, string $terms, string $params): ?int
+    protected function update(array $data, string $terms, array|string|null $params): ?int
     {
-        if ($this->timestamps) {
-            $data["updated_at"] = (new DateTime("now"))->format("Y-m-d H:i:s");
+        if ($this->updatedAt) {
+            $data[$this->updatedAt] = static::now();
+        }
+        if (!$data) {
+            return 0;
         }
 
         try {
-            $dateSet = [];
-            foreach ($data as $bind => $value) {
-                $dateSet[] = "{$bind} = :{$bind}";
+            $pdo = Connect::getInstance($this->database);
+            $dataSet = [];
+            foreach (array_keys($data) as $bind) {
+                $dataSet[] = $this->quote($pdo, $bind) . " = :{$bind}";
             }
-            $dateSet = implode(", ", $dateSet);
-            parse_str($params ?? "", $params);
+            $dataSet = implode(", ", $dataSet);
 
-            $stmt = Connect::getInstance($this->database);
-            $prepare = $stmt->prepare("UPDATE {$this->entity} SET {$dateSet} WHERE {$terms}");
-            $prepare->execute($this->filter(array_merge($data, $params)));
-
-            return $prepare->rowCount();
-        } catch (PDOException $exception) {
-            $this->fail = $exception;
-            return null;
+            $stmt = $this->run(
+                "UPDATE {$this->entity} SET {$dataSet} WHERE {$terms}",
+                array_merge($data, $this->normalizeParams($params))
+            );
+            return $stmt->rowCount();
+        } catch (DomainException | PDOException $exception) {
+            return $this->failed($exception);
         }
     }
 
     /**
      * @param string $terms
-     * @param string|null $params
+     * @param array|string|null $params
      * @return bool
      */
-    public function delete(string $terms, ?string $params): bool
+    public function delete(string $terms, array|string|null $params = null): bool
     {
-        try {
-            $stmt = Connect::getInstance($this->database);
-            $prepare = $stmt->prepare("DELETE FROM {$this->entity} WHERE {$terms}");
-            if ($params) {
-                parse_str($params, $params);
-                $prepare->execute($params);
-                return true;
-            }
+        $this->fail = null;
 
-            $prepare->execute();
+        try {
+            $this->run("DELETE FROM {$this->entity} WHERE {$terms}", $this->normalizeParams($params));
             return true;
-        } catch (PDOException $exception) {
-            $this->fail = $exception;
-            return false;
+        } catch (DomainException | PDOException $exception) {
+            return $this->failed($exception) ?? false;
         }
     }
 
     /**
-     * @param array $data
-     * @return array|null
+     * Prepara, liga os valores com o tipo certo e executa.
+     *
+     * @param string $sql
+     * @param array $params
+     * @return PDOStatement
+     * @throws PDOException
      */
-    private function filter(array $data): ?array
+    private function run(string $sql, array $params = []): PDOStatement
     {
-        $filter = [];
-        foreach ($data as $key => $value) {
-            $filter[$key] = (is_null($value) ? null : filter_var($value, FILTER_DEFAULT));
+        try {
+            $stmt = Connect::getInstance($this->database)->prepare($sql);
+            foreach ($params as $key => $value) {
+                $param = is_int($key) ? $key + 1 : ":" . ltrim($key, ":");
+                [$value, $type] = $this->bindable($value);
+                $stmt->bindValue($param, $value, $type);
+            }
+            $stmt->execute();
+            return $stmt;
+        } catch (PDOException $exception) {
+            //Conexão morta não fica guardada: a próxima operação reconecta (esta não é repetida)
+            if (Connect::isConnectionLost($exception)) {
+                Connect::forget($this->database);
+            }
+            throw $exception;
         }
-        return $filter;
+    }
+
+    /**
+     * @param mixed $value
+     * @return array [valor, tipo PDO]
+     */
+    private function bindable(mixed $value): array
+    {
+        return match (true) {
+            is_null($value) => [null, PDO::PARAM_NULL],
+            is_bool($value) => [(int)$value, PDO::PARAM_INT],
+            is_int($value) => [$value, PDO::PARAM_INT],
+            is_float($value) => [(string)$value, PDO::PARAM_STR],
+            is_string($value) => [$value, PDO::PARAM_STR],
+            $value instanceof DateTimeInterface => [$value->format("Y-m-d H:i:s"), PDO::PARAM_STR],
+            $value instanceof BackedEnum => $this->bindable($value->value),
+            $value instanceof Stringable => [(string)$value, PDO::PARAM_STR],
+            default => throw new DomainException(
+                "Valor do tipo " . get_debug_type($value) . " não pode ser usado no banco"
+            )
+        };
+    }
+
+    /**
+     * Aceita array (recomendado) ou query string ("id=1&name=x", formato antigo).
+     *
+     * @param array|string|null $params
+     * @return array
+     */
+    private function normalizeParams(array|string|null $params): array
+    {
+        if (is_string($params)) {
+            parse_str($params, $params);
+        }
+
+        $normalized = [];
+        foreach ($params ?? [] as $key => $value) {
+            $normalized[is_int($key) ? $key : ltrim($key, ":")] = $value;
+        }
+        return $normalized;
+    }
+
+    /**
+     * Valida e coloca o nome da coluna entre aspas do banco (permite colunas como "order").
+     *
+     * @param PDO $pdo
+     * @param int|string $column
+     * @return string
+     */
+    private function quote(PDO $pdo, int|string $column): string
+    {
+        $column = Identifier::name((string)$column);
+
+        return match ($pdo->getAttribute(PDO::ATTR_DRIVER_NAME)) {
+            "mysql" => "`{$column}`",
+            "sqlsrv", "dblib" => "[{$column}]",
+            default => "\"{$column}\""
+        };
     }
 }
