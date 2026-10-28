@@ -2,7 +2,7 @@
 
 namespace Example\Models;
 
-use CoffeeCode\DataLayer\DataLayer;
+use BrLayer\DataLayer;
 
 /**
  * Class User
@@ -10,6 +10,10 @@ use CoffeeCode\DataLayer\DataLayer;
  */
 class User extends DataLayer
 {
+    protected ?string $createdAt = "created_at";
+    protected ?string $updatedAt = "updated_at";
+    protected array $fillable = ["first_name", "last_name", "genre"];
+
     /**
      * User constructor.
      */

@@ -3,19 +3,15 @@
 require 'db_config.php';
 require '../vendor/autoload.php';
 
-use CoffeeCode\DataLayer\Connect;
+use BrLayer\Connect;
 
 /*
  * GET PDO instance AND errors
  */
-$connect = Connect::getInstance();
-$error = Connect::getError();
-
-/*
- * CHECK connection/errors
- */
-if ($error) {
-    echo $error->getMessage();
+try {
+    $connect = Connect::getInstance();
+} catch (PDOException $exception) {
+    echo $exception->getMessage();
     exit;
 }
 

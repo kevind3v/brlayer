@@ -20,6 +20,9 @@ if ($create) {
     $user->first_name = "Robson";
     $user->last_name = "V. Leite";
     $user->genre = "m";
+
+    //ou, com dados de formulário, só os campos permitidos:
+    //$user = (new User())->fill($_POST, ["first_name", "last_name", "genre"]);
     if ($user->save()) {
         echo "Usuário cadastrado";
         var_dump($user->data());

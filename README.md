@@ -1,289 +1,278 @@
-# Data Layer @CoffeeCode
+# BrLayer
 
-[![Maintainer](http://img.shields.io/badge/maintainer-@robsonvleite-blue.svg?style=flat-square)](https://twitter.com/robsonvleite)
-[![Source Code](http://img.shields.io/badge/source-coffeecode/datalayer-blue.svg?style=flat-square)](https://github.com/robsonvleite/datalayer)
-[![PHP from Packagist](https://img.shields.io/packagist/php-v/coffeecode/datalayer.svg?style=flat-square)](https://packagist.org/packages/coffeecode/datalayer)
-[![Latest Version](https://img.shields.io/github/release/robsonvleite/datalayer.svg?style=flat-square)](https://github.com/robsonvleite/datalayer/releases)
 [![Software License](https://img.shields.io/badge/license-MIT-brightgreen.svg?style=flat-square)](LICENSE)
-[![Quality Score](https://img.shields.io/scrutinizer/g/robsonvleite/datalayer.svg?style=flat-square)](https://scrutinizer-ci.com/g/robsonvleite/datalayer)
-[![Total Downloads](https://img.shields.io/packagist/dt/coffeecode/datalayer.svg?style=flat-square)](https://packagist.org/packages/coffeecode/datalayer)
 
-###### The data layer is a persistent abstraction component of your database that PDO has prepared instructions for performing common routines such as registering, reading, editing, and removing data.
+Camada de persistência para PHP 8.2+ com PDO e prepared statements. Você cria uma model por tabela
+(padrão Active Record) e cadastra, lê, edita e remove dados com poucas linhas.
 
-O data layer é um componente para abstração de persistência no seu banco de dados que usa PDO com prepared statements
-para executar rotinas comuns como cadastrar, ler, editar e remover dados.
+> Fork mantido da [CoffeeCode DataLayer](https://github.com/robsonvleite/datalayer), de Robson V. Leite,
+> atualizado para o PHP 8.x e com correções de segurança. Veja [Migrando da CoffeeCode DataLayer](#migrando-da-coffeecode-datalayer).
 
-## About CoffeeCode
-
-###### CoffeeCode is a set of small and optimized PHP components for common tasks. Held by Robson V. Leite and the UpInside team. With them you perform routine tasks with fewer lines, writing less and doing much more.
-
-CoffeeCode é um conjunto de pequenos e otimizados componentes PHP para tarefas comuns. Mantido por Robson V. Leite e a
-equipe UpInside. Com eles você executa tarefas rotineiras com poucas linhas, escrevendo menos e fazendo muito mais.
-
-### Highlights
-
-- Easy to set up (Fácil de configurar)
-- Total CRUD asbtration (Asbtração total do CRUD)
-- Create safe models (Crie de modelos seguros)
-- Composer ready (Pronto para o composer)
-- PSR-2 compliant (Compatível com PSR-2)
-
-## Installation
-
-Data Layer is available via Composer:
+## Instalação
 
 ```bash
-"coffeecode/datalayer": "2.0.*"
+composer require kevind3v/brlayer
 ```
 
-or run
-
-```bash
-composer require coffeecode/datalayer
-```
-
-## Documentation
-
-###### For details on how to use the Data Layer, see the sample folder with details in the component directory
-
-Para mais detalhes sobre como usar o Data Layer, veja a pasta de exemplo com detalhes no diretório do componente
-
-#### connection
-
-###### To begin using the Data Layer, you need to connect to the database (MariaDB / MySql). For more connections [PDO connections manual on PHP.net](https://www.php.net/manual/pt_BR/pdo.drivers.php)
-
-Para começar a usar o Data Layer precisamos de uma conexão com o seu banco de dados. Para ver as conexões possíveis
-acesse o [manual de conexões do PDO em PHP.net](https://www.php.net/manual/pt_BR/pdo.drivers.php)
+## Conexão
 
 ```php
 const DATA_LAYER_CONFIG = [
     "driver" => "mysql",
     "host" => "localhost",
     "port" => "3306",
-    "dbname" => "datalayer_example",
+    "dbname" => "meu_banco",
     "username" => "root",
     "passwd" => "",
+    "charset" => "utf8mb4",
     "options" => [
-        PDO::MYSQL_ATTR_INIT_COMMAND => "SET NAMES utf8",
-        PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
-        PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_OBJ,
-        PDO::ATTR_CASE => PDO::CASE_NATURAL
+        PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_OBJ
     ]
 ];
 ```
 
-#### your model
+- `charset` (só MySQL) entra no DSN. Use `utf8mb4` para aceitar emojis.
+- `dsn` (opcional) substitui o DSN montado, ex.: `"dsn" => "sqlite:/caminho/banco.db"`.
+- O modo de erro do PDO é sempre `ERRMODE_EXCEPTION`, independente das `options`.
 
-###### The Data Layer is based on an MVC structure with the Layer Super Type and Active Record design patterns. Soon to consume it is necessary to create the model of your table and inherit the Data Layer.
+Se a conexão falhar, a exceção real (ex.: `Access denied for user...`) vai para o `fail()` da model,
+ou é lançada com `$throwOnFail`.
 
-O Data Layer é baseado em uma estrutura MVC com os padrões de projeto Layer Super Type e Active Record. Logo para
-consumir é necessário criar o modelo de sua tabela e herdar o Data Layer.
+Proteções da conexão:
+
+- **Um comando por chamada** (MySQL): `"...; DROP TABLE x"` é recusado pelo banco, mesmo que algum SQL
+  seja montado concatenando valores. Para liberar, passe `Pdo\Mysql::ATTR_MULTI_STATEMENTS => true` nas `options`.
+- **Conexão perdida** ("server has gone away"): a operação que pegou a queda falha normalmente e a
+  próxima abre uma conexão nova. A operação **não** é repetida automaticamente, para não duplicar
+  INSERT/UPDATE. Para descartar a conexão manualmente (ex.: em workers): `Connect::forget()`.
+
+## Model
 
 ```php
-<?php
+use BrLayer\DataLayer;
 
 class User extends DataLayer
 {
-    /**
-     * User constructor.
-     */
     public function __construct()
     {
-        //string "TABLE_NAME", array ["REQUIRED_FIELD_1", "REQUIRED_FIELD_2"], string "PRIMARY_KEY", bool "TIMESTAMPS"
+        // tabela, campos obrigatórios, chave primária (padrão "id"), banco (padrão DATA_LAYER_CONFIG)
         parent::__construct("users", ["first_name", "last_name"]);
     }
 }
 ```
 
-#### find
+### Datas de criação e alteração
+
+Desligadas por padrão. Declare só as colunas que a tabela tem:
 
 ```php
-<?php
+class User extends DataLayer
+{
+    protected ?string $createdAt = "created_at"; // preenchida ao criar
+    protected ?string $updatedAt = "updated_at"; // preenchida ao criar e ao alterar
+}
 
-use Example\Models\User;
+class Log extends DataLayer
+{
+    protected ?string $createdAt = "log_created_at"; // tabela só com data de criação
+}
+```
 
+### Lançar exceção nas falhas
+
+Por padrão, as falhas ficam em `fail()` e o método devolve `false`/`null`. Com `$throwOnFail`, a exceção
+original (com o código SQL, ex.: `23000` para duplicidade) é lançada:
+
+```php
+class User extends DataLayer
+{
+    protected bool $throwOnFail = true;
+}
+```
+
+## Consultas
+
+```php
 $model = new User();
 
-//find all users
-$users = $model->find()->fetch(true);
-
-//find all users limit 2
-$users = $model->find()->limit(2)->fetch(true);
-
-//find all users limit 2 offset 2
-$users = $model->find()->limit(2)->offset(2)->fetch(true);
-
-//find all users limit 2 offset 2 order by field ASC
+$users = $model->find()->fetch(true);                                  // todos
 $users = $model->find()->limit(2)->offset(2)->order("first_name ASC")->fetch(true);
-
-// find all users with in operator
 $users = $model->find()->in("id", [1, 2, 3])->fetch(true);
+$user = $model->find("email = :email", ["email" => $email])->fetch();  // um registro
+$user = $model->findById(2);                                           // id inteiro ou texto (UUID)
+$total = $model->find("genre = :g", ["g" => "f"])->count();
 
-//looping users
-foreach ($users as $user) {
+foreach ($users ?? [] as $user) {
     echo $user->first_name;
 }
-
-//find one user by condition
-$user = $model->find("first_name = :name", "name=Robson")->fetch();
-echo $user->first_name;
-
-//find one user by two conditions
-$user = $model->find("first_name = :name AND last_name = :last", "name=Robson&last=Leite")->fetch();
-echo $user->first_name . " " . $user->first_last;
-
-//find one user by condition and with in operator
-$user = $model->find("first_name = :name", "name=Robson")->in("last_name",["Menezes", "Sampaio"])->fetch(true);
-
-foreach ($users as $user) {
-    echo $user->first_name . " " . $user->first_last;
-}
 ```
 
-#### findById
+- Cada `find()` começa uma consulta nova: filtros, ordem e limites da anterior são descartados.
+- `fetch(true)` devolve um array de models ou `null` quando não encontra nada.
+- `count()` considera o WHERE e o `in()`, e ignora `group`, `order`, `limit` e `offset`.
+
+### Parâmetros
+
+Passe os valores sempre por placeholder, como array:
 
 ```php
-<?php
-
-use Example\Models\User;
-
-$model = new User();
-$user = $model->findById(2);
-echo $user->first_name;
+$model->find("first_name = :name AND last_name = :last", ["name" => "Ana", "last" => "Silva"]);
 ```
 
-#### secure params
+O formato antigo em query string (`"name=Ana&last=Silva"`) ainda funciona, mas evite: nele `+` vira
+espaço e um valor com `&` consegue alterar outros parâmetros.
 
-###### See example find_example.php and model classes
+### Nomes de coluna validados
 
-Consulte exemplo find_example.php e classes modelo
+Os nomes de coluna não podem ir por placeholder, então a lib valida tudo que entra no SQL como nome:
+`order()`, `group()`, as colunas do `find()`, a coluna do `in()` e as colunas gravadas pelo `save()`.
+Aceita letras, números, `_`, `tabela.coluna` e `` `crase` ``. O resto lança `InvalidArgumentException`.
 
 ```php
-<?php
-
-$params = http_build_query(["name" => "UpInside & Associated"]);
-$company = (new Company())->find("name = :name", $params);
-var_dump($company, $company->fetch());
+$model->find()->order("us.first_name DESC, us.id");   // ok
+$model->find()->order($_GET["sort"]);                 // seguro: algo fora do padrão é recusado
+$model->find()->orderRaw("RAND()");                   // sem validação: nunca passe dados do usuário
 ```
 
-#### join method
+O `WHERE` (`$terms`) é SQL livre: escreva os placeholders e nunca concatene valores nele.
 
-###### See example find_example.php and model classes
-
-Consulte exemplo find_example.php e classes modelo
+## Salvar e remover
 
 ```php
-<?php
-
-$addresses = new Address();
-$address = $addresses->findById(22);
-//get user data to this->user->[all data]
-$address->user();
-var_dump($address);
-```
-
-#### count
-
-```php
-<?php
-
-use Example\Models\User;
-
-$model = new User();
-$count = $model->find()->count();
-```
-
-#### save create
-
-```php
-<?php
-
-use Example\Models\User;
-
 $user = new User();
-$user->first_name = "Robson";
-$user->last_name = "Leite";
-$userId = $user->save();
-```
-
-#### save update
-
-```php
-<?php
-
-use Example\Models\User;
+$user->first_name = "Ana";
+$user->last_name = "Silva";
+$user->save(); // cria (sem id) ou atualiza (com id existente)
 
 $user = (new User())->findById(2);
-$user->first_name = "Robson";
-$userId = $user->save();
-```
+$user->first_name = "Bruna";
+$user->save();
 
-#### destroy
-
-```php
-<?php
-
-use Example\Models\User;
-
-$user = (new User())->findById(2);
 $user->destroy();
-```
 
-#### fail
-
-```php
-<?php
-
-use Example\Models\User;
-
-$user = (new User())->findById(2);
-if($user->fail()){
+if ($user->fail()) {
     echo $user->fail()->getMessage();
 }
 ```
 
-#### custom data method
+- Campos obrigatórios aceitam `0` e `"0"`. Só faltam quando não existem, são `null` ou `""`.
+- Com chave definida pelo sistema (ex.: UUID), o `save()` cria quando o registro não existe.
+- `true`/`false` são gravados como `1`/`0` e `DateTime` como `Y-m-d H:i:s`.
+- Valor que não pode ir para o banco (ex.: array vindo de `campo[]=x` no formulário) é uma falha comum:
+  vai para o `fail()` (`DomainException`), ou é lançada com `$throwOnFail`.
+- `fail()` volta a `null` a cada operação.
 
-````php
-<?php
+### Dados de formulário: `fill()`
 
-class User{
+Preenche a model só com os campos permitidos. O resto (ex.: um `is_admin` injetado no formulário) é ignorado:
 
-    public function fullName(): string 
+```php
+$user = (new User())->fill($_POST, ["first_name", "last_name", "email"]);
+$user->save();
+```
+
+Sem a lista, o `fill()` usa a propriedade `$fillable` da model. Sem nenhuma das duas, lança exceção.
+A chave primária nunca entra pelo `$fillable`; só se for informada na lista do próprio `fill()`.
+
+Atribuições diretas continuam livres: `$user->is_admin = 1;`.
+
+## Métodos da model
+
+Métodos públicos sem argumentos criados na sua model podem ser lidos como propriedade:
+
+```php
+class User extends DataLayer
+{
+    public function fullName(): string
     {
         return "{$this->first_name} {$this->last_name}";
     }
-    
-    public function document(): string
-    {
-        return "Restrict";
-    }
 }
 
-echo $this->full_name; //Robson V. Leite
-echo $this->document; //Restrict
-```` 
+echo $user->full_name; // Ana Silva
+```
 
-## Contributing
+Os métodos da própria BrLayer (`save`, `destroy`, `find`...) nunca são chamados assim.
 
-Please see [CONTRIBUTING](https://github.com/robsonvleite/datalayer/blob/master/CONTRIBUTING.md) for details.
+## Transação
 
-## Support
+```php
+DataLayer::transaction(function () {
+    $user->save();
+    $address->save();
+});
+```
 
-###### Security: If you discover any security related issues, please email cursos@upinside.com.br instead of using the issue tracker.
+Confirma no fim, ou desfaz tudo se qualquer exceção for lançada (e repassa a exceção). Dentro de outra
+transação, só roda dentro dela. Para que uma falha de `save()` desfaça a transação, use `$throwOnFail = true`.
+Para outro banco: `DataLayer::transaction($action, OUTRO_BANCO)`.
 
-Se você descobrir algum problema relacionado à segurança, envie um e-mail para cursos@upinside.com.br em vez de usar o
-rastreador de problemas.
+## SQL próprio
 
-Thank you
+Para agregações, JOIN, UNION e comandos em lote, a model tem métodos protegidos:
 
-## Credits
+```php
+class User extends DataLayer
+{
+    public function totalsByGenre(array $ids): array
+    {
+        [$in, $params] = static::inList($ids, "uid"); // ":uid0, :uid1" + valores
+        return $this->rows(
+            "SELECT genre, COUNT(*) AS total FROM users WHERE id IN ({$in}) GROUP BY genre",
+            $params
+        );
+    }
+}
+```
 
-- [Robson V. Leite](https://github.com/robsonvleite) (Developer)
-- [UpInside Treinamentos](https://github.com/upinside) (Team)
-- [All Contributors](https://github.com/robsonvleite/datalayer/contributors) (This Rock)
+| Método | Devolve |
+|---|---|
+| `rows($sql, $params)` | todas as linhas (arrays associativos) |
+| `row($sql, $params)` | a primeira linha ou `null` |
+| `execute($sql, $params)` | quantidade de linhas alteradas |
+| `static::inList($values, $name)` | placeholders e valores de um `IN`. Lista vazia vira `NULL` (não encontra nada) |
+| `static::now($modify)` | data e hora no fuso do PHP, ex.: `now("-30 days")` |
 
-## License
+## Depuração
 
-The MIT License (MIT). Please see [License File](https://github.com/robsonvleite/datalayer/blob/master/LICENSE) for more
-information.
+```php
+$model->find("id > :id", ["id" => 1])->order("id");
+$model->getStatement(); // SELECT * FROM users WHERE id > :id ORDER BY id
+$model->getParams();    // ["id" => 1]
+```
+
+`var_dump`/`print_r` de uma model mostram `passwd` como `********`.
+
+## Migrando da CoffeeCode DataLayer
+
+1. Troque `CoffeeCode\DataLayer\` por `BrLayer\` nos `use`.
+2. **Timestamps agora são desligados por padrão.** Nas models que usam `created_at`/`updated_at`, declare
+   `$createdAt` e `$updatedAt`. O 4º parâmetro do construtor (`bool $timestamps`) saiu: o banco
+   passou a ser o 4º.
+3. `updated_at` agora também é preenchido na criação.
+4. `Connect::getInstance()` lança a exceção quando não conecta (antes devolvia `null`).
+5. Ler `$model->save`, `$model->destroy` etc. como propriedade não executa mais o método.
+6. O estado interno (`data`, `params`, `order`...) é privado. Use `data()`, `getParams()`, `getStatement()`.
+   Model que sobrescreve `create()`, `update()`, `rows()` ou `execute()` precisa ajustar a assinatura
+   (os parâmetros agora aceitam `array|string|null`).
+7. `RAND()` e outras funções no `order()`: use `orderRaw()`.
+8. `in()` com lista vazia não encontra nada (antes dava erro de SQL).
+
+## Testes
+
+Os testes usam um MySQL de verdade (banco `brlayer_test`). Ajuste a conexão pelas variáveis
+`DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER` e `DB_PASS` (padrões no `phpunit.xml`):
+
+```bash
+mysql -uroot -p -e "CREATE DATABASE brlayer_test CHARACTER SET utf8mb4"
+DB_PASS=senha composer test
+```
+
+## Créditos
+
+- [Robson V. Leite](https://github.com/robsonvleite): autor da CoffeeCode DataLayer original
+- [Kevin Siqueira](https://github.com/kevind3v): BrLayer
+
+## Licença
+
+MIT. Veja o [LICENSE](LICENSE).

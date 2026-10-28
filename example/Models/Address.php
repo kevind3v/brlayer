@@ -2,7 +2,7 @@
 
 namespace Example\Models;
 
-use CoffeeCode\DataLayer\DataLayer;
+use BrLayer\DataLayer;
 
 /**
  * Class Address
@@ -10,6 +10,9 @@ use CoffeeCode\DataLayer\DataLayer;
  */
 class Address extends DataLayer
 {
+    protected ?string $createdAt = "created_at";
+    protected ?string $updatedAt = "updated_at";
+
     /**
      * Address constructor.
      */
