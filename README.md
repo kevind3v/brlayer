@@ -1,6 +1,11 @@
 # BrLayer
 
+[![Maintainer](https://img.shields.io/badge/maintainer-@kevind3v-blue.svg?style=flat-square)](https://github.com/kevind3v)
+[![Source Code](https://img.shields.io/badge/source-brbunny/brlayer-blue.svg?style=flat-square)](https://github.com/kevind3v/brlayer)
+[![PHP from Packagist](https://img.shields.io/packagist/php-v/brbunny/brlayer.svg?style=flat-square)](https://packagist.org/packages/brbunny/brlayer)
+[![Latest Version](https://img.shields.io/github/release/kevind3v/brlayer.svg?style=flat-square)](https://github.com/kevind3v/brlayer/releases)
 [![Software License](https://img.shields.io/badge/license-MIT-brightgreen.svg?style=flat-square)](LICENSE)
+[![Total Downloads](https://img.shields.io/packagist/dt/brbunny/brlayer.svg?style=flat-square)](https://packagist.org/packages/brbunny/brlayer)
 
 Camada de persistência para PHP 8.2+ com PDO e prepared statements. Você cria uma model por tabela
 (padrão Active Record) e cadastra, lê, edita e remove dados com poucas linhas.
